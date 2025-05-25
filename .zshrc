@@ -1,0 +1,2 @@
+# Flutter SDK Path
+export PATH="$PATH:/usr/local/flutter/bin"
