@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sizer/sizer.dart';
 
 import '../../core/app_export.dart';
@@ -27,14 +30,42 @@ class _HabitManagerState extends State<HabitManager> {
   }
 
   Future<void> _loadHabits() async {
-    // Simulate loading from storage
-    await Future.delayed(const Duration(seconds: 1));
+    setState(() {
+      _isLoading = true;
+    });
     
-    if (mounted) {
-      setState(() {
-        _habits = _getMockHabits();
-        _isLoading = false;
-      });
+    try {
+      // Get shared preferences
+      final prefs = await SharedPreferences.getInstance();
+      
+      // Load habits
+      final habitsJson = prefs.getString('habits');
+      if (habitsJson != null) {
+        final List<dynamic> decoded = jsonDecode(habitsJson);
+        if (mounted) {
+          setState(() {
+            _habits = decoded.map((h) => Map<String, dynamic>.from(h)).toList();
+            _isLoading = false;
+          });
+        }
+      } else {
+        // Load mock data if no saved data exists
+        if (mounted) {
+          setState(() {
+            _habits = _getMockHabits();
+            _isLoading = false;
+          });
+        }
+      }
+    } catch (e) {
+      // Load mock data on error
+      if (mounted) {
+        setState(() {
+          _habits = _getMockHabits();
+          _isLoading = false;
+        });
+      }
+      print('Error loading habits: $e');
     }
   }
 
@@ -45,20 +76,35 @@ class _HabitManagerState extends State<HabitManager> {
       _isRefreshing = true;
     });
     
-    // Simulate refresh with timeout
-    await Future.delayed(const Duration(milliseconds: 1500));
-    
-    if (mounted) {
-      setState(() {
-        _habits = _getMockHabits();
-        _isRefreshing = false;
-      });
+    try {
+      // Reload from shared preferences
+      final prefs = await SharedPreferences.getInstance();
+      final habitsJson = prefs.getString('habits');
+      
+      if (mounted) {
+        setState(() {
+          if (habitsJson != null) {
+            final List<dynamic> decoded = jsonDecode(habitsJson);
+            _habits = decoded.map((h) => Map<String, dynamic>.from(h)).toList();
+          } else {
+            _habits = _getMockHabits();
+          }
+          _isRefreshing = false;
+        });
+      }
       
       Fluttertoast.showToast(
         msg: "Habits refreshed",
         toastLength: Toast.LENGTH_SHORT,
         gravity: ToastGravity.BOTTOM,
       );
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isRefreshing = false;
+        });
+      }
+      print('Error refreshing habits: $e');
     }
   }
 
@@ -118,27 +164,55 @@ class _HabitManagerState extends State<HabitManager> {
     );
   }
 
-  void _handleHabitAdded(Map<String, dynamic> newHabit) {
-    setState(() {
-      _habits.add({
+  void _handleHabitAdded(Map<String, dynamic> newHabit) async {
+    try {
+      // Generate a unique ID based on timestamp
+      final String id = DateTime.now().millisecondsSinceEpoch.toString();
+      
+      final habitToAdd = {
         ...newHabit,
-        "id": DateTime.now().millisecondsSinceEpoch.toString(),
+        "id": id,
         "streak": 0,
         "history": List.filled(7, false),
         "completedToday": false,
+      };
+      
+      setState(() {
+        _habits.add(habitToAdd);
       });
-    });
-    
-    Fluttertoast.showToast(
-      msg: "New habit created",
-      toastLength: Toast.LENGTH_SHORT,
-      gravity: ToastGravity.BOTTOM,
-      backgroundColor: AppTheme.success,
-      textColor: Colors.white,
-    );
+      
+      // Save to shared preferences
+      await _saveHabits();
+      
+      Fluttertoast.showToast(
+        msg: "New habit created",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: AppTheme.success,
+        textColor: Colors.white,
+      );
+    } catch (e) {
+      Fluttertoast.showToast(
+        msg: "Failed to create habit",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: AppTheme.error,
+        textColor: Colors.white,
+      );
+      print('Error adding habit: $e');
+    }
+  }
+  
+  Future<void> _saveHabits() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('habits', jsonEncode(_habits));
+    } catch (e) {
+      print('Error saving habits: $e');
+    }
   }
 
-  void _handleHabitCompletion(String habitId, bool isCompleted) {
+  void _handleHabitCompletion(String habitId, bool isCompleted) async {
     setState(() {
       final habitIndex = _habits.indexWhere((habit) => habit["id"] == habitId);
       if (habitIndex != -1) {
@@ -156,6 +230,9 @@ class _HabitManagerState extends State<HabitManager> {
         } else {
           // If unchecking, reduce streak
           habit["streak"] = (habit["streak"] as int) - 1;
+          if (habit["streak"] < 0) {
+            habit["streak"] = 0;
+          }
           final history = List<bool>.from(habit["history"]);
           history[0] = false;
           habit["history"] = history;
@@ -164,9 +241,12 @@ class _HabitManagerState extends State<HabitManager> {
         _habits[habitIndex] = habit;
       }
     });
+    
+    // Save changes to shared preferences
+    await _saveHabits();
   }
 
-  void _handleHabitDismissed(String habitId, DismissDirection direction) {
+  void _handleHabitDismissed(String habitId, DismissDirection direction) async {
     // Get the habit before removing it
     final habit = _habits.firstWhere((h) => h["id"] == habitId);
     final habitName = habit["name"];
@@ -175,6 +255,9 @@ class _HabitManagerState extends State<HabitManager> {
     setState(() {
       _habits.removeWhere((h) => h["id"] == habitId);
     });
+    
+    // Save changes to shared preferences
+    await _saveHabits();
     
     // Show different messages based on direction
     final action = direction == DismissDirection.endToStart ? "deleted" : "archived";
@@ -194,12 +277,15 @@ class _HabitManagerState extends State<HabitManager> {
         content: Text('$habitName has been $action'),
         action: SnackBarAction(
           label: 'UNDO',
-          onPressed: () {
+          onPressed: () async {
             setState(() {
               _habits.add(habit);
               // Sort habits to maintain order
-              _habits.sort((a, b) => a["id"].compareTo(b["id"]));
+              _habits.sort((a, b) => a["id"].toString().compareTo(b["id"].toString()));
             });
+            
+            // Save changes to shared preferences
+            await _saveHabits();
           },
         ),
         behavior: SnackBarBehavior.floating,
@@ -217,48 +303,56 @@ class _HabitManagerState extends State<HabitManager> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          'Habit Manager',
-          style: AppTheme.lightTheme.textTheme.titleLarge,
-        ),
-        leading: IconButton(
-          icon: const CustomIconWidget(
-            iconName: 'arrow_back',
-            color: AppTheme.textPrimary,
-            size: 24,
+    return WillPopScope(
+      onWillPop: () async {
+        // Return to home dashboard with result to trigger refresh
+        Navigator.pushNamed(context, '/home-dashboard', arguments: true);
+        return false;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            'Habit Manager',
+            style: AppTheme.lightTheme.textTheme.titleLarge,
           ),
-          onPressed: () {
-            Navigator.pushNamed(context, '/home-dashboard');
-          },
-        ),
-        actions: [
-          IconButton(
+          leading: IconButton(
             icon: const CustomIconWidget(
-              iconName: 'refresh',
+              iconName: 'arrow_back',
               color: AppTheme.textPrimary,
               size: 24,
             ),
-            onPressed: _refreshHabits,
+            onPressed: () {
+              // Return to home dashboard with result to trigger refresh
+              Navigator.pushNamed(context, '/home-dashboard', arguments: true);
+            },
           ),
-        ],
-      ),
-      body: _isLoading
-          ? _buildLoadingState()
-          : _habits.isEmpty
-              ? EmptyStateWidget(onAddHabit: _showAddHabitModal)
-              : _buildHabitList(),
-      floatingActionButton: _habits.isEmpty
-          ? null
-          : FloatingActionButton(
-              onPressed: _showAddHabitModal,
-              child: const CustomIconWidget(
-                iconName: 'add',
-                color: Colors.white,
+          actions: [
+            IconButton(
+              icon: const CustomIconWidget(
+                iconName: 'refresh',
+                color: AppTheme.textPrimary,
                 size: 24,
               ),
+              onPressed: _refreshHabits,
             ),
+          ],
+        ),
+        body: _isLoading
+            ? _buildLoadingState()
+            : _habits.isEmpty
+                ? EmptyStateWidget(onAddHabit: _showAddHabitModal)
+                : _buildHabitList(),
+        floatingActionButton: _habits.isEmpty
+            ? null
+            : FloatingActionButton(
+                onPressed: _showAddHabitModal,
+                child: const CustomIconWidget(
+                  iconName: 'add',
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+      ),
     );
   }
 

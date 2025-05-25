@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sizer/sizer.dart';
 
 import '../../core/app_export.dart';
@@ -20,10 +24,10 @@ class _HomeDashboardState extends State<HomeDashboard> {
   bool _hasJournalEntries = false;
   bool _hasHabits = false;
   
-  // Mock data for journal entries
+  // Journal entries data
   final List<Map<String, dynamic>> _journalEntries = [];
   
-  // Mock data for habits
+  // Habits data
   final List<Map<String, dynamic>> _habits = [];
   
   @override
@@ -37,11 +41,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
       _isLoading = true;
     });
     
-    // Simulate network delay
-    await Future.delayed(const Duration(seconds: 2));
-    
-    // Load mock data
-    _loadMockData();
+    // Load saved data from SharedPreferences
+    await _loadSavedData();
     
     setState(() {
       _isLoading = false;
@@ -50,8 +51,49 @@ class _HomeDashboardState extends State<HomeDashboard> {
     });
   }
   
-  void _loadMockData() {
-    // Mock journal entries
+  Future<void> _loadSavedData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      // Load journal entries
+      final journalEntriesJson = prefs.getString('journal_entries');
+      if (journalEntriesJson != null) {
+        final List<dynamic> decoded = jsonDecode(journalEntriesJson);
+        _journalEntries.clear();
+        for (var entry in decoded) {
+          // Convert string date back to DateTime
+          if (entry['date'] is String) {
+            entry['date'] = DateTime.parse(entry['date']);
+          }
+          _journalEntries.add(Map<String, dynamic>.from(entry));
+        }
+      } else {
+        // Load mock data if no saved data exists
+        _loadMockJournalData();
+      }
+      
+      // Load habits
+      final habitsJson = prefs.getString('habits');
+      if (habitsJson != null) {
+        final List<dynamic> decoded = jsonDecode(habitsJson);
+        _habits.clear();
+        for (var habit in decoded) {
+          _habits.add(Map<String, dynamic>.from(habit));
+        }
+      } else {
+        // Load mock data if no saved data exists
+        _loadMockHabitData();
+      }
+    } catch (e) {
+      // If there's an error, load mock data
+      _loadMockJournalData();
+      _loadMockHabitData();
+      
+      print('Error loading data: $e');
+    }
+  }
+  
+  void _loadMockJournalData() {
     _journalEntries.clear();
     _journalEntries.addAll([
       {
@@ -76,8 +118,9 @@ class _HomeDashboardState extends State<HomeDashboard> {
         "date": DateTime.now().subtract(const Duration(days: 2)),
       },
     ]);
-    
-    // Mock habits
+  }
+  
+  void _loadMockHabitData() {
     _habits.clear();
     _habits.addAll([
       {
@@ -122,25 +165,76 @@ class _HomeDashboardState extends State<HomeDashboard> {
     await _loadData();
   }
   
-  void _navigateToJournalEntryCreator() {
-    Navigator.pushNamed(context, '/journal-entry-creator');
+  void _navigateToJournalEntryCreator() async {
+    final result = await Navigator.pushNamed(context, '/journal-entry-creator');
+    if (result == true) {
+      // Reload data if a journal entry was created
+      _loadData();
+      Fluttertoast.showToast(
+        msg: "Journal entry added successfully",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: AppTheme.success,
+        textColor: Colors.white,
+      );
+    }
   }
   
   void _navigateToJournalArchive() {
     Navigator.pushNamed(context, '/journal-archive');
   }
   
-  void _navigateToHabitManager() {
-    Navigator.pushNamed(context, '/habit-manager');
+  void _navigateToHabitManager() async {
+    final result = await Navigator.pushNamed(context, '/habit-manager');
+    if (result == true) {
+      // Reload data if habits were updated
+      _loadData();
+      Fluttertoast.showToast(
+        msg: "Habits updated successfully",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: AppTheme.success,
+        textColor: Colors.white,
+      );
+    }
   }
   
-  void _toggleHabitCompletion(int habitId) {
+  void _toggleHabitCompletion(int habitId) async {
     setState(() {
       final habitIndex = _habits.indexWhere((habit) => habit["id"] == habitId);
       if (habitIndex != -1) {
         _habits[habitIndex]["completedToday"] = !_habits[habitIndex]["completedToday"];
+        
+        // Update streak
+        if (_habits[habitIndex]["completedToday"]) {
+          _habits[habitIndex]["streak"] = (_habits[habitIndex]["streak"] as int) + 1;
+        } else {
+          _habits[habitIndex]["streak"] = (_habits[habitIndex]["streak"] as int) - 1;
+          if (_habits[habitIndex]["streak"] < 0) {
+            _habits[habitIndex]["streak"] = 0;
+          }
+        }
       }
     });
+    
+    // Save updated habits
+    await _saveHabits();
+  }
+  
+  Future<void> _saveHabits() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      // Convert habits to JSON-serializable format
+      final List<Map<String, dynamic>> serializableHabits = _habits.map((habit) {
+        final Map<String, dynamic> copy = Map<String, dynamic>.from(habit);
+        return copy;
+      }).toList();
+      
+      await prefs.setString('habits', jsonEncode(serializableHabits));
+    } catch (e) {
+      print('Error saving habits: $e');
+    }
   }
   
   @override

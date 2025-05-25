@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sizer/sizer.dart';
 
 import '../../core/app_export.dart';
@@ -105,27 +108,65 @@ class _JournalEntryCreatorState extends State<JournalEntryCreator> {
         _isSaving = true;
       });
       
-      // Simulate saving to storage
-      await Future.delayed(const Duration(seconds: 1));
-      
-      if (mounted) {
+      try {
+        // Get shared preferences
+        final prefs = await SharedPreferences.getInstance();
+        
+        // Get existing journal entries or create empty list
+        final entriesJson = prefs.getString('journal_entries') ?? '[]';
+        final List<dynamic> entries = jsonDecode(entriesJson);
+        
+        // Generate a new ID (in a real app, this would be handled differently)
+        final newId = entries.isEmpty ? 1 : (entries.map((e) => e['id']).reduce((a, b) => a > b ? a : b) + 1);
+        
+        // Create new journal entry
+        final newEntry = {
+          'id': newId,
+          'title': _titleController.text.trim(),
+          'content': _contentController.text.trim(),
+          'category': _selectedCategory,
+          'date': DateTime.now().toIso8601String(), // Store as string for JSON serialization
+        };
+        
+        // Add to beginning of list (most recent first)
+        entries.insert(0, newEntry);
+        
+        // Save updated list
+        await prefs.setString('journal_entries', jsonEncode(entries));
+        
+        if (mounted) {
+          setState(() {
+            _isSaving = false;
+            _hasChanges = false;
+          });
+          
+          Fluttertoast.showToast(
+            msg: "Journal entry saved successfully!",
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: AppTheme.success,
+            textColor: Colors.white,
+          );
+          
+          // Navigate back with result
+          if (mounted) {
+            Navigator.of(context).pop(true); // Return true to indicate success
+          }
+        }
+      } catch (e) {
         setState(() {
           _isSaving = false;
-          _hasChanges = false;
         });
         
         Fluttertoast.showToast(
-          msg: "Journal entry saved successfully!",
-          toastLength: Toast.LENGTH_SHORT,
+          msg: "Failed to save journal entry. Please try again.",
+          toastLength: Toast.LENGTH_LONG,
           gravity: ToastGravity.BOTTOM,
-          backgroundColor: AppTheme.success,
+          backgroundColor: AppTheme.error,
           textColor: Colors.white,
         );
         
-        // Navigate back or to dashboard
-        if (mounted) {
-          Navigator.of(context).pushNamed('/home-dashboard');
-        }
+        print('Error saving journal entry: $e');
       }
     }
   }
