@@ -177,12 +177,17 @@ class _HabitManagerState extends State<HabitManager> {
         "completedToday": false,
       };
       
-      setState(() {
-        _habits.add(habitToAdd);
-      });
+      final List<Map<String, dynamic>> updatedHabits = [..._habits, habitToAdd];
       
       // Save to shared preferences
-      await _saveHabits();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('habits', jsonEncode(updatedHabits));
+      
+      if (mounted) {
+        setState(() {
+          _habits = updatedHabits;
+        });
+      }
       
       Fluttertoast.showToast(
         msg: "New habit created",
